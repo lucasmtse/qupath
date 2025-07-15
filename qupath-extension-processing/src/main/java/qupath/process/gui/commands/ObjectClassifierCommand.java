@@ -136,7 +136,8 @@ import qupath.opencv.ml.objects.features.FeatureExtractors;
 import qupath.opencv.ml.objects.features.Preprocessing;
 import qupath.opencv.tools.OpenCVTools;
 import qupath.process.gui.commands.ml.ProjectClassifierBindings;
-
+import qupath.lib.objects.classes.PathClass;
+import qupath.lib.measurements.Measurement;
 
 /**
  * Command used to create and show a suitable dialog box for interactive display of OpenCV classifiers.
@@ -214,7 +215,7 @@ public class ObjectClassifierCommand implements Runnable {
 
 
 	static class ObjectClassifierPane implements ChangeListener<ImageData<BufferedImage>>, PathObjectHierarchyListener {
-
+		private double trainingSplitRatio = 0.8; // 80% training, 20% test
 		private static final Logger logger = LoggerFactory.getLogger(ObjectClassifierPane.class);
 
 		private QuPathGUI qupath;
@@ -546,7 +547,7 @@ public class ObjectClassifierCommand implements Runnable {
 				if (training.isEmpty() || Thread.interrupted())
 					return null;
 				
-				long nTrainingObjects = training.stream().mapToLong(t -> t.map.size()).sum();
+				long nTrainingObjects = training.stream().mapToLong(t -> t.trainMap.size()).sum();
 				if (nTrainingObjects <= 1L) {
 					Dialogs.showErrorNotification("Object classifier", "You need to annotate objects with at least two classifications to train a classifier!");
 					return null;
@@ -698,42 +699,64 @@ public class ObjectClassifierCommand implements Runnable {
 				TrainingAnnotations training,
 				Collection<PathClass> selectedClasses) {
 
-			Map<PathClass, Set<PathObject>> map = new TreeMap<>();
+			Map<PathClass, Set<PathObject>> trainMap = new TreeMap<>();
+			Map<PathClass, Set<PathObject>> testMap = new TreeMap<>();
 
-			// Get training annotations & associated objects
 			var hierarchy = imageData.getHierarchy();
 			var trainingAnnotations = getTrainingAnnotations(hierarchy, training);
 
 			if (Thread.interrupted())
 				return null;
 
-			// Use a set for detections because we might need to check if we have the same detection for multiple classes
 			var filterNegated = filter.negate();
 			for (var annotation : trainingAnnotations) {
 				var pathClass = annotation.getPathClass();
 				if (selectedClasses == null || selectedClasses.contains(pathClass)) {
-					// Use a TreeSet ordered by ID
-					// This is to overcome https://github.com/qupath/qupath/issues/1016
-					var set = map.computeIfAbsent(pathClass, p -> new TreeSet<>(Comparator.comparing(PathObject::getID)));
+					var allObjects = new ArrayList<PathObject>();
 					var roi = annotation.getROI();
+
 					if (roi.isPoint()) {
-						for (Point2 p : annotation.getROI().getAllPoints()) {
+						for (Point2 p : roi.getAllPoints()) {
 							var pathObjectsTemp = PathObjectTools.getObjectsForLocation(
 									hierarchy, p.getX(), p.getY(), roi.getZ(), roi.getT(), -1);
 							pathObjectsTemp.removeIf(filterNegated);
-							set.addAll(pathObjectsTemp);
+							allObjects.addAll(pathObjectsTemp);
 						}
 					} else {
-						var pathObjectsTemp = hierarchy.getAllDetectionsForROI(annotation.getROI());
+						var pathObjectsTemp = hierarchy.getAllDetectionsForROI(roi);
 						pathObjectsTemp.removeIf(filterNegated);
-						set.addAll(pathObjectsTemp);
+						allObjects.addAll(pathObjectsTemp);
 					}
+
+					// Mélange aléatoire
+					Collections.shuffle(allObjects);
+
+					int splitIndex = (int) (allObjects.size() * 0.8);
+					var trainList = allObjects.subList(0, splitIndex);
+					var testList = allObjects.subList(splitIndex, allObjects.size());
+					for (PathObject obj : trainList) {
+						obj.getMeasurementList().put("SetType", 1.0);
+					}
+					for (PathObject obj : testList) {
+						obj.getMeasurementList().put("SetType", 0.0);
+					}
+
+					var trainSet = trainMap.computeIfAbsent(pathClass, p -> new HashSet<>());
+					var testSet = testMap.computeIfAbsent(pathClass, p -> new HashSet<>());
+					trainSet.addAll(trainList);
+					testSet.addAll(testList);
+
 				}
 			}
 
-			map.entrySet().removeIf(e -> e.getValue().isEmpty());
-			return new TrainingData<>(imageData, map);
+			trainMap.entrySet().removeIf(e -> e.getValue().isEmpty());
+			testMap.entrySet().removeIf(e -> e.getValue().isEmpty());
+
+
+
+			return new TrainingData<>(imageData, trainMap, testMap);
 		}
+
 
 		/**
 		 * Train an object classifier.
@@ -791,15 +814,15 @@ public class ObjectClassifierCommand implements Runnable {
 			}
 			var counts = new LinkedHashMap<PathClass, Integer>();
 			for (var t : training) {
-				for (var entry : t.map.entrySet()) {
+				for (var entry : t.trainMap.entrySet()) {
 					var key = entry.getKey();
 					Integer total = counts.getOrDefault(key, 0) + entry.getValue().size();
 					counts.put(entry.getKey(), total);
 				}
 			}
-			ChartTools.setPieChartData(pieChart, counts, PathClass::toString, p -> ColorToolsFX.getCachedColor(p.getColor()), true, !counts.isEmpty());
+			ChartTools.setPieChartData(pieChart, counts, PathClass::toString, p -> ColorToolsFX.getCachedColor(p.getColor()), false, !counts.isEmpty());
 			if (counts.isEmpty())
-				pieChart.setTitle(null);
+				pieChart.setTitle("No data");
 			else
 				pieChart.setTitle("Training data");
 		}
@@ -818,22 +841,32 @@ public class ObjectClassifierCommand implements Runnable {
 
 
 
-		static class TrainingData<T>{
+		static class TrainingData<T> {
 
 			private ImageData<T> imageData;
-			private Map<PathClass, Set<PathObject>> map;
+			private Map<PathClass, Set<PathObject>> trainMap;
+			private Map<PathClass, Set<PathObject>> testMap;
 
-			private TrainingData(ImageData<T> imageData, Map<PathClass, Set<PathObject>> map) {
+			private TrainingData(ImageData<T> imageData, Map<PathClass, Set<PathObject>> trainMap, Map<PathClass, Set<PathObject>> testMap) {
 				this.imageData = imageData;
-				this.map = map;
+				this.trainMap = trainMap;
+				this.testMap = testMap;
 			}
 
+			public Map<PathClass, Set<PathObject>> getTrainMap() {
+				return trainMap;
+			}
+
+			public Map<PathClass, Set<PathObject>> getTestMap() {
+				return testMap;
+			}
+			public Map<PathClass, Set<PathObject>> getMap() {
+				return trainMap;
+			}
 			public Collection<PathClass> getPathClasses() {
-				return map.keySet();
+				return trainMap.keySet();
 			}
-
 		}
-		
 		
 		static <T> List<PathClass> getPathClasses(Collection<TrainingData<T>> training) {
 			Set<PathClass> classSet = new HashSet<>();
@@ -890,7 +923,7 @@ public class ObjectClassifierCommand implements Runnable {
 			var scope = new PointerScope()) {
 				for (var training : trainingCollection) {
 					var imageData = training.imageData;
-					var map = training.map;
+					var map = training.trainMap;
 	
 					int nFeatures = extractor.nFeatures();
 					int nSamples = map.values().stream().mapToInt(l -> l.size()).sum();
@@ -1686,5 +1719,6 @@ public class ObjectClassifierCommand implements Runnable {
 		}
 
 	}
+
 
 }
