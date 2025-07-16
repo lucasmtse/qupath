@@ -138,7 +138,24 @@ import qupath.opencv.tools.OpenCVTools;
 import qupath.process.gui.commands.ml.ProjectClassifierBindings;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.measurements.Measurement;
-
+import qupath.lib.roi.PointsROI;
+import qupath.lib.objects.PathAnnotationObject;
+import javafx.scene.control.TextArea;
+import javafx.scene.layout.VBox;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.Label;
+import javafx.scene.control.Separator;
+import qupath.lib.objects.classes.PathClassTools;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.ButtonType;
+import javafx.scene.layout.GridPane;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
+import javafx.scene.control.Separator;
+import java.util.Optional;
+import java.io.IOException;
 /**
  * Command used to create and show a suitable dialog box for interactive display of OpenCV classifiers.
  * <p>
@@ -339,6 +356,14 @@ public class ObjectClassifierCommand implements Runnable {
 
 		private ExecutorService pool = Executors.newSingleThreadExecutor(ThreadTools.createThreadFactory("object-classifier", true));
 		private FutureTask<ObjectClassifier<BufferedImage>> classifierTask;
+		private VBox evaluationPanel;
+		private Label lblConfMatrix;
+		private Label lblPrecision, lblRecall, lblF1, lblKappa;
+		private GridPane confusionGrid;
+		private Label cellTP, cellFN, cellFP, cellTN;
+
+		private PathClass positiveClass = PathClass.fromString("none");
+		private PathClass negativeClass = PathClass.fromString("none");
 
 		ObjectClassifierPane(QuPathGUI qupath) {
 			this.qupath = qupath;
@@ -1387,7 +1412,92 @@ public class ObjectClassifierCommand implements Runnable {
 			labelCursor.setAlignment(Pos.CENTER);
 			labelCursor.setTooltip(new Tooltip("Prediction for current cursor location"));
 			pane.add(labelCursor, 0, row++, pane.getColumnCount(), 1);
-			
+
+			// Classes for evaluation
+			Button btnChooseClasses = new Button("Classes for evaluation");
+			btnChooseClasses.setOnAction(e -> showClassSelectionDialog());
+			pane.add(btnChooseClasses, 0, row++, 2, 1);
+
+// Bouton for evaluation
+			var btnEvaluateTest = new Button("Evaluate Test Set");
+			btnEvaluateTest.setMaxWidth(Double.MAX_VALUE);
+			btnEvaluateTest.setTooltip(new Tooltip("Évalue les prédictions du classifieur sur les objets test (SetType = 0.0)"));
+
+			btnEvaluateTest.setOnAction(e -> {
+				new Thread(() -> evaluateTestSet()).start();  // pour ne pas bloquer l'UI
+			});
+			pane.add(btnEvaluateTest, 0, row++, pane.getColumnCount(), 1);
+
+// Panel for evaluation results
+			evaluationPanel = new VBox(8);
+			evaluationPanel.setPadding(new Insets(10));
+			evaluationPanel.setStyle("-fx-border-color: lightgray; -fx-border-width: 1px; -fx-background-color: #f9f9f9;");
+			evaluationPanel.setAlignment(Pos.TOP_LEFT);
+
+// Confusion matrix header
+			lblConfMatrix = new Label("Confusion matrix :");
+			lblConfMatrix.setStyle("-fx-font-family: monospace; -fx-font-weight: bold;");
+
+// Metrics labels
+			lblPrecision = new Label();
+			lblRecall = new Label();
+			lblF1 = new Label();
+			lblKappa = new Label();
+			confusionGrid = new GridPane();
+			confusionGrid.setHgap(15);
+			confusionGrid.setVgap(10);
+			confusionGrid.setPadding(new Insets(10));
+			confusionGrid.setAlignment(Pos.CENTER_LEFT);
+			confusionGrid.setStyle("-fx-border-color: #ccc; -fx-border-width: 1px; -fx-background-color: #f0f0f0;");
+
+// En-têtes colonnes dynamiques
+			Label header1 = new Label("");  // Case vide pour alignement
+			Label header2 = new Label("Pred: Pos ");  // Classe positive (TP)
+			Label header3 = new Label("Pred:  Neg");  // Classe négative (TN)
+
+			header2.setStyle("-fx-font-weight: bold;");
+			header3.setStyle("-fx-font-weight: bold;");
+
+// Ajouter les en-têtes une seule fois
+			confusionGrid.add(header1, 0, 0);
+			confusionGrid.add(header2, 1, 0);
+			confusionGrid.add(header3, 2, 0);
+
+// Lignes avec étiquettes dynamiques
+			Label row1 = new Label("True: Pos");  // Classe positive (TP)
+			row1.setStyle("-fx-font-weight: bold;");
+			Label row2 = new Label("True: Neg");  // Classe négative (TN)
+			row2.setStyle("-fx-font-weight: bold;");
+
+// Ajouter les lignes une seule fois
+			confusionGrid.add(row1, 0, 1);
+			confusionGrid.add(row2, 0, 2);
+
+// Cellules dynamiques pour les résultats
+			cellTP = new Label("-");
+			cellFN = new Label("-");
+			cellFP = new Label("-");
+			cellTN = new Label("-");
+
+// Ajouter les cellules dans la grille (une seule fois)
+			confusionGrid.add(cellTP, 1, 1);
+			confusionGrid.add(cellFN, 2, 1);
+			confusionGrid.add(cellFP, 1, 2);
+			confusionGrid.add(cellTN, 2, 2);
+
+// Ajouter la grille de confusion et les autres résultats à l'interface
+			evaluationPanel.getChildren().addAll(
+					confusionGrid,
+					new Separator(),
+					lblPrecision,
+					lblRecall,
+					lblF1,
+					lblKappa
+			);
+
+			pane.add(evaluationPanel, 0, row++, pane.getColumnCount(), 1);
+
+
 			/*
 			 * Save classifier
 			 */
@@ -1549,6 +1659,226 @@ public class ObjectClassifierCommand implements Runnable {
 			}
 			invalidateClassifier();
 		}
+
+
+
+
+
+
+		private void showClassSelectionDialog() {
+			// Set pour stocker les classes uniques du projet
+			Set<PathClass> availableClasses = new HashSet<>();
+
+			// Lire la première image du projet (on peut en choisir une pour récupérer les classes)
+			var project = qupath.getProject();
+			if (project == null) {
+				logger.error("Aucun projet trouvé !");
+				return;
+			}
+
+			try {
+				// Récupérer l'image de la première entrée du projet
+				var firstImageData = project.getImageList().get(0).readImageData();  // On lit les données de la première image
+
+				// Parcours des objets de la hiérarchie de la première image pour récupérer leurs classes
+				for (PathObject obj : firstImageData.getHierarchy().getFlattenedObjectList(null)) {
+					PathClass pc = obj.getPathClass();
+					if (pc != null) {
+						availableClasses.add(pc);  // Ajouter la classe à l'ensemble
+					}
+				}
+			} catch (IOException e) {
+				logger.error("Erreur lors de la lecture de l'image", e);
+				return;
+			}
+
+			// Convertir les classes disponibles en liste triée par nom
+			List<PathClass> classList = availableClasses.stream()
+					.sorted(Comparator.comparing(PathClass::getName))
+					.toList();
+
+			// Créer les ComboBox pour la sélection des classes positive et négative
+			ComboBox<PathClass> comboPositive = new ComboBox<>(FXCollections.observableArrayList(classList));
+			ComboBox<PathClass> comboNegative = new ComboBox<>(FXCollections.observableArrayList(classList));
+			comboPositive.setValue(positiveClass);
+			comboNegative.setValue(negativeClass);
+
+			// Créer le panneau GridPane pour afficher les options
+			GridPane grid = new GridPane();
+			grid.setHgap(10);
+			grid.setVgap(10);
+			grid.setPadding(new Insets(20, 150, 10, 10));
+
+			grid.add(new Label("Classe positive (TP) :"), 0, 0);
+			grid.add(comboPositive, 1, 0);
+			grid.add(new Label("Classe négative (TN) :"), 0, 1);
+			grid.add(comboNegative, 1, 1);
+
+			// Créer la boîte de dialogue
+			Dialog<ButtonType> dialog = new Dialog<>();
+			dialog.setTitle("Choix des classes d’évaluation");
+			dialog.getDialogPane().setContent(grid);
+			dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+			// Attendre la réponse de l'utilisateur
+			Optional<ButtonType> result = dialog.showAndWait();
+			if (result.isPresent() && result.get() == ButtonType.OK) {
+				// Mettre à jour les classes sélectionnées par l'utilisateur
+				positiveClass = comboPositive.getValue();
+				negativeClass = comboNegative.getValue();
+			}
+		}
+
+
+		private void evaluateTestSet() {
+			var project = qupath.getProject();
+			if (project == null) {
+				logger.error("Aucun projet chargé.");
+				return;
+			}
+
+			// Initialiser les compteurs
+			int TP = 0, TN = 0, FP = 0, FN = 0;
+
+			// Classes pour l'évaluation (ici, les classes sont définies dynamiquement)
+			PathClass positiveClass = this.positiveClass;  // Classe positive (sélectionnée par l'utilisateur)
+			PathClass negativeClass = this.negativeClass;  // Classe négative (sélectionnée par l'utilisateur)
+
+			// Parcours de toutes les images d'entraînement
+			for (var entry : trainingEntries) {
+				ImageData<BufferedImage> imageData;
+				try {
+					imageData = entry.readImageData();  // Lire l'image
+				} catch (Exception e) {
+					logger.error("Erreur lecture image {}", entry.getImageName(), e);
+					continue;
+				}
+
+				var hierarchy = imageData.getHierarchy();
+
+				// Objets de test (associés à "SetType" = 0.0)
+				var testObjects = hierarchy.getDetectionObjects().stream()
+						.filter(obj -> obj.getMeasurementList().get("SetType") == 0.0)
+						.toList();
+
+				// Annotations
+				List<PathAnnotationObject> anns = hierarchy.getAnnotationObjects().stream()
+						.filter(obj -> obj instanceof PathAnnotationObject)
+						.map(obj -> (PathAnnotationObject) obj)
+						.toList();
+
+				// Points d'annotations Cy5
+				var pointsCy5ROI = anns.stream()
+						.filter(a -> positiveClass.equals(a.getPathClass()) && a.getROI() instanceof PointsROI)
+						.findFirst();
+
+				// Points d'annotations Other: Cy5
+				var pointsOtherROI = anns.stream()
+						.filter(a -> negativeClass.equals(a.getPathClass()) && a.getROI() instanceof PointsROI)
+						.findFirst();
+
+				// Si les annotations ne sont pas présentes, ignorer l'image
+				if (pointsCy5ROI.isEmpty() || pointsOtherROI.isEmpty()) {
+					logger.warn("Image {} ignorée — Annotations Cy5 ou Other: Cy5 manquantes", entry.getImageName());
+					continue;
+				}
+
+				var cy5Points = ((PointsROI) pointsCy5ROI.get().getROI()).getAllPoints();
+				var otherPoints = ((PointsROI) pointsOtherROI.get().getROI()).getAllPoints();
+
+				// Filtrer les points Cy5 qui correspondent aux objets de test
+				var filteredCy5 = cy5Points.stream().filter(pt ->
+						testObjects.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
+				).toList();
+
+				// Filtrer les points Other qui correspondent aux objets de test
+				var filteredOther = otherPoints.stream().filter(pt ->
+						testObjects.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
+				).toList();
+
+				// Objets prédits de Cy5 et Other
+				var predictedCy5 = testObjects.stream()
+						.filter(obj -> positiveClass.equals(obj.getPathClass()))
+						.toList();
+
+				var predictedOther = testObjects.stream()
+						.filter(obj -> negativeClass.equals(obj.getPathClass()))
+						.toList();
+
+				// Matched points pour Cy5 et Other
+				var matchedCy5 = filteredCy5.stream().filter(pt ->
+						predictedCy5.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
+				).count();
+
+				var matchedOther = filteredOther.stream().filter(pt ->
+						predictedOther.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
+				).count();
+
+				// Calcul des valeurs de la matrice de confusion
+				int gtCy5 = filteredCy5.size();
+				int gtOther = filteredOther.size();
+				int tp = (int) matchedCy5;
+				int tn = (int) matchedOther;
+				int fn = gtCy5 - tp;
+				int fp = gtOther - tn;
+
+				TP += tp;
+				TN += tn;
+				FN += fn;
+				FP += fp;
+
+				logger.info("Image {} — TP: {}, FP: {}, FN: {}, TN: {}", entry.getImageName(), tp, fp, fn, tn);
+			}
+
+			// Calcul des métriques
+			double recall = TP / (TP + FN + 1e-10);
+			double precision = TP / (TP + FP + 1e-10);
+			double f1 = 2 * precision * recall / (precision + recall + 1e-10);
+			double cohen = 2.0 * (TP * TN - FN * FP) /
+					((TP + FP) * (FP + TN) + (TP + FN) * (FN + TN) + 1e-10);
+
+			// Mise à jour de l'interface avec les résultats
+			final int TP_ = TP;
+			final int FN_ = FN;
+			final int FP_ = FP;
+			final int TN_ = TN;
+
+			final double precision_ = precision;
+			final double recall_ = recall;
+			final double f1_ = f1;
+			final double kappa_ = cohen;
+
+			Platform.runLater(() -> {
+				// Efface les anciennes valeurs de la grille (sauf les en-têtes)
+				confusionGrid.getChildren().removeIf(node ->
+						GridPane.getRowIndex(node) != null && GridPane.getRowIndex(node) > 0 && GridPane.getColumnIndex(node) > 1
+				);
+
+				// Ajoute les nouvelles valeurs dans la grille
+				confusionGrid.add(new Label(String.valueOf(TP_)), 2, 1);
+				confusionGrid.add(new Label(String.valueOf(FN_)), 3, 1);
+				confusionGrid.add(new Label(String.valueOf(FP_)), 2, 2);
+				confusionGrid.add(new Label(String.valueOf(TN_)), 3, 2);
+
+				// Autres métriques
+				// Affichage des labels avec le nom des métriques en italique
+				lblPrecision.setText(String.format("Precision     : %.2f", precision_));
+				lblPrecision.setStyle("-fx-font-style: italic;");  // Mise en italique
+
+				lblRecall.setText(String.format("Recall        : %.2f", recall_));
+				lblRecall.setStyle("-fx-font-style: bold;");  // Mise en italique
+
+				lblF1.setText(String.format("F1-score      : %.2f", f1_));
+				lblF1.setStyle("-fx-font-style: bold;");  // Mise en italique
+
+				lblKappa.setText(String.format("Cohen's Kappa : %.2f", kappa_));
+				lblKappa.setStyle("-fx-font-style: bold;");  // Mise en italique
+
+
+			});
+		}
+
+
 
 	}
 
