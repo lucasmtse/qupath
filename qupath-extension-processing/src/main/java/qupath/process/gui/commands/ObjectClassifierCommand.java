@@ -541,8 +541,12 @@ public class ObjectClassifierCommand implements Runnable {
 							imageData,
 							annotations,
 							output == OutputClasses.ALL ? null : selectedClasses);
+					var entry = qupath.getProject().getEntry(imageData);
+					if (entry != null)
+						entry.saveImageData(imageData);
 					training.add(temp);
 				}
+
 
 				if (training.isEmpty() || Thread.interrupted())
 					return null;
