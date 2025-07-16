@@ -156,6 +156,8 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.Separator;
 import java.util.Optional;
 import java.io.IOException;
+import javafx.scene.text.Text;
+import javafx.scene.text.TextFlow;
 /**
  * Command used to create and show a suitable dialog box for interactive display of OpenCV classifiers.
  * <p>
@@ -757,7 +759,7 @@ public class ObjectClassifierCommand implements Runnable {
 						allObjects.addAll(pathObjectsTemp);
 					}
 
-					// Mélange aléatoire
+					// Random shuffle
 					Collections.shuffle(allObjects);
 
 					int splitIndex = (int) (allObjects.size() * 0.8);
@@ -1851,28 +1853,58 @@ public class ObjectClassifierCommand implements Runnable {
 			Platform.runLater(() -> {
 				// Efface les anciennes valeurs de la grille (sauf les en-têtes)
 				confusionGrid.getChildren().removeIf(node ->
-						GridPane.getRowIndex(node) != null && GridPane.getRowIndex(node) > 0 && GridPane.getColumnIndex(node) > 1
+						GridPane.getRowIndex(node) != null && GridPane.getRowIndex(node) > 0 && GridPane.getColumnIndex(node) > 0
 				);
 
 				// Ajoute les nouvelles valeurs dans la grille
-				confusionGrid.add(new Label(String.valueOf(TP_)), 2, 1);
-				confusionGrid.add(new Label(String.valueOf(FN_)), 3, 1);
-				confusionGrid.add(new Label(String.valueOf(FP_)), 2, 2);
-				confusionGrid.add(new Label(String.valueOf(TN_)), 3, 2);
+				confusionGrid.add(new Label(String.valueOf(TP_)), 1, 1);
+				confusionGrid.add(new Label(String.valueOf(FN_)), 2, 1);
+				confusionGrid.add(new Label(String.valueOf(FP_)), 1, 2);
+				confusionGrid.add(new Label(String.valueOf(TN_)), 2, 2);
 
-				// Autres métriques
-				// Affichage des labels avec le nom des métriques en italique
-				lblPrecision.setText(String.format("Precision     : %.2f", precision_));
-				lblPrecision.setStyle("-fx-font-style: italic;");  // Mise en italique
+				//Other metrics
+				Text textPrecision = new Text("Precision:   ");
+				textPrecision.setStyle("-fx-font-weight: bold; -fx-font-style: italic;");  // Nom en gras et italique
 
-				lblRecall.setText(String.format("Recall        : %.2f", recall_));
-				lblRecall.setStyle("-fx-font-style: bold;");  // Mise en italique
+				Text textPrecisionValue = new Text(String.format("%.2f", precision_));
+				textPrecisionValue.setStyle("-fx-font-weight: bold;");  // Chiffre en gras
 
-				lblF1.setText(String.format("F1-score      : %.2f", f1_));
-				lblF1.setStyle("-fx-font-style: bold;");  // Mise en italique
+				Text textRange = new Text("  	(Range: 0 - 1 | Good: >= 0.80)");
+				textRange.setStyle("-fx-font-weight: normal; -fx-font-style: normal;");  // Plage en texte normal
 
-				lblKappa.setText(String.format("Cohen's Kappa : %.2f", kappa_));
-				lblKappa.setStyle("-fx-font-style: bold;");  // Mise en italique
+				TextFlow precisionFlow = new TextFlow(textPrecision, textPrecisionValue, textRange);
+				lblPrecision.setGraphic(precisionFlow);  // Utilisation de TextFlow comme graphic
+
+
+				Text textRecall = new Text("Recall:       ");
+				textRecall.setStyle("-fx-font-weight: bold; -fx-font-style: italic;");
+				Text textRecallValue = new Text(String.format("%.2f", recall_));
+				textRecallValue.setStyle("-fx-font-weight: bold;");  // Chiffre en gras
+				Text textRecallRange = new Text("  	(Range: 0 - 1 | Good: >= 0.80)");
+				textRecallRange.setStyle("-fx-font-weight: normal; -fx-font-style: normal;");
+
+				TextFlow recallFlow = new TextFlow(textRecall, textRecallValue, textRecallRange);
+				lblRecall.setGraphic(recallFlow);
+
+				Text textF1 = new Text("F1-score:    ");
+				textF1.setStyle("-fx-font-weight: bold; -fx-font-style: italic;");
+				Text textF1Value = new Text(String.format("%.2f", f1_));
+				textF1Value.setStyle("-fx-font-weight: bold;");  // Chiffre en gras
+				Text textF1Range = new Text("  	(Range: 0 - 1 | Good: >= 0.75)");
+				textF1Range.setStyle("-fx-font-weight: normal; -fx-font-style: normal;");
+
+				TextFlow f1Flow = new TextFlow(textF1, textF1Value, textF1Range);
+				lblF1.setGraphic(f1Flow);
+
+				Text textKappa = new Text("Cohen's Kappa: ");
+				textKappa.setStyle("-fx-font-weight: bold; -fx-font-style: italic;");
+				Text textKappaValue = new Text(String.format("%.2f", kappa_));
+				textKappaValue.setStyle("-fx-font-weight: bold;");  // Chiffre en gras
+				Text textKappaRange = new Text("  	(Range: -1 to 1 | Good: >= 0.60)");
+				textKappaRange.setStyle("-fx-font-weight: normal; -fx-font-style: normal;");
+
+				TextFlow kappaFlow = new TextFlow(textKappa, textKappaValue, textKappaRange);
+				lblKappa.setGraphic(kappaFlow);
 
 
 			});
