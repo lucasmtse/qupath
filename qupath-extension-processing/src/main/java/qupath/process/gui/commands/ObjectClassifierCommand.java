@@ -158,6 +158,7 @@ import java.util.Optional;
 import java.io.IOException;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
+import javafx.scene.layout.HBox;
 /**
  * Command used to create and show a suitable dialog box for interactive display of OpenCV classifiers.
  * <p>
@@ -234,7 +235,6 @@ public class ObjectClassifierCommand implements Runnable {
 
 
 	static class ObjectClassifierPane implements ChangeListener<ImageData<BufferedImage>>, PathObjectHierarchyListener {
-		private double trainingSplitRatio = 0.8; // 80% training, 20% test
 		private static final Logger logger = LoggerFactory.getLogger(ObjectClassifierPane.class);
 
 		private QuPathGUI qupath;
@@ -366,7 +366,7 @@ public class ObjectClassifierCommand implements Runnable {
 
 		private PathClass positiveClass = PathClass.fromString("none");
 		private PathClass negativeClass = PathClass.fromString("none");
-
+		private double trainingSplitRatio = 0.8;
 		ObjectClassifierPane(QuPathGUI qupath) {
 			this.qupath = qupath;
 			selectedClasses.addAll(qupath.getAvailablePathClasses());
@@ -489,36 +489,71 @@ public class ObjectClassifierCommand implements Runnable {
 			return list;
 		}
 
-		
-		
+
 		private boolean promptToLoadTrainingImages() {
 			var project = qupath.getProject();
 			if (project == null) {
 				GuiTools.showNoProjectError("Object classifier");
 				return false;
 			}
-			
+
+			// Liste des images
 			var listView = ProjectDialogs.createImageChoicePane(qupath, project.getImageList(), trainingEntries,
 					"Specified image is open!");
-			
+
+			// Label + champ split
+			var labelInfo = new Label("Select images to use for training the object classifier.\n"
+					+ "More images = more memory & training time.\nSpecify the train/test split ratio below.");
+
+			var labelSplit = new Label("Train/Test split (0–1):");
+			var tfSplit = new TextField(Double.toString(this.trainingSplitRatio));
+			tfSplit.setMaxWidth(80);
+			tfSplit.setPromptText("e.g. 0.8");
+
+			var topPane = new VBox(8, labelInfo, new HBox(10, labelSplit, tfSplit));
+			topPane.setPadding(new Insets(10));
+
 			var pane = new BorderPane(listView);
-			pane.setTop(new Label("Select images to use for training the object classifier.\n"
-					+ "Note that more images will require more memory and more processing time!"));
-			
-			if (Dialogs.builder()
-					.title("Object classifier training images")
-					.content(pane)
-					.resizable()
-					.buttons(ButtonType.APPLY, ButtonType.CANCEL)
-					.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.CANCEL)
+			pane.setTop(topPane);
+
+			// Créer une vraie Dialog pour capturer la valeur au bon moment
+			Dialog<ButtonType> dialog = new Dialog<>();
+			dialog.setTitle("Object classifier training images");
+			dialog.getDialogPane().setContent(pane);
+			dialog.getDialogPane().getButtonTypes().addAll(ButtonType.APPLY, ButtonType.CANCEL);
+			dialog.setResizable(true);
+
+			// ✅ Capturer la valeur du split AVANT fermeture de la boîte
+			dialog.setResultConverter(dialogButton -> {
+				if (dialogButton == ButtonType.APPLY) {
+					try {
+						double val = Double.parseDouble(tfSplit.getText());
+						if (val >= 0.0 && val <= 1.0) {
+							this.trainingSplitRatio = val;
+							logger.info("Training split ratio updated to {}", val);
+						} else {
+							logger.warn("Invalid training split ratio: {}", val);
+						}
+					} catch (NumberFormatException e) {
+						logger.warn("Invalid training split ratio input: not a number");
+					}
+				}
+				return dialogButton;
+			});
+
+			// Afficher la boîte
+			Optional<ButtonType> result = dialog.showAndWait();
+			if (result.isEmpty() || result.get() != ButtonType.APPLY)
 				return false;
-			
+
+			// ✅ Met à jour la liste d’images
 			trainingEntries.clear();
 			trainingEntries.addAll(listView.getTargetItems());
-			
+
 			return true;
 		}
-		
+
+
 
 		/**
 		 * Create a classifier training task based on the current GUI control values (but don't submit it for processing).
@@ -567,7 +602,8 @@ public class ObjectClassifierCommand implements Runnable {
 							filter,
 							imageData,
 							annotations,
-							output == OutputClasses.ALL ? null : selectedClasses);
+							output == OutputClasses.ALL ? null : selectedClasses,
+							trainingSplitRatio);
 					var entry = qupath.getProject().getEntry(imageData);
 					if (entry != null)
 						entry.saveImageData(imageData);
@@ -728,7 +764,8 @@ public class ObjectClassifierCommand implements Runnable {
 				PathObjectFilter filter,
 				ImageData<T> imageData,
 				TrainingAnnotations training,
-				Collection<PathClass> selectedClasses) {
+				Collection<PathClass> selectedClasses,
+				double trainingSplitRatio) {
 
 			Map<PathClass, Set<PathObject>> trainMap = new TreeMap<>();
 			Map<PathClass, Set<PathObject>> testMap = new TreeMap<>();
@@ -762,7 +799,7 @@ public class ObjectClassifierCommand implements Runnable {
 					// Random shuffle
 					Collections.shuffle(allObjects);
 
-					int splitIndex = (int) (allObjects.size() * 0.8);
+					int splitIndex = (int) (allObjects.size() * trainingSplitRatio);
 					var trainList = allObjects.subList(0, splitIndex);
 					var testList = allObjects.subList(splitIndex, allObjects.size());
 					for (PathObject obj : trainList) {
