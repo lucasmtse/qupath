@@ -497,13 +497,13 @@ public class ObjectClassifierCommand implements Runnable {
 				return false;
 			}
 
-			// Liste des images
+		
 			var listView = ProjectDialogs.createImageChoicePane(qupath, project.getImageList(), trainingEntries,
 					"Specified image is open!");
 
-			// Label + champ split
+
 			var labelInfo = new Label("Select images to use for training the object classifier.\n"
-					+ "More images = more memory & training time.\nSpecify the train/test split ratio below.");
+					+ "Note that more images will require more memory and more processing time!");
 
 			var labelSplit = new Label("Train/Test split (0–1):");
 			var tfSplit = new TextField(Double.toString(this.trainingSplitRatio));
@@ -516,14 +516,14 @@ public class ObjectClassifierCommand implements Runnable {
 			var pane = new BorderPane(listView);
 			pane.setTop(topPane);
 
-			// Créer une vraie Dialog pour capturer la valeur au bon moment
+
 			Dialog<ButtonType> dialog = new Dialog<>();
 			dialog.setTitle("Object classifier training images");
 			dialog.getDialogPane().setContent(pane);
 			dialog.getDialogPane().getButtonTypes().addAll(ButtonType.APPLY, ButtonType.CANCEL);
 			dialog.setResizable(true);
 
-			// ✅ Capturer la valeur du split AVANT fermeture de la boîte
+
 			dialog.setResultConverter(dialogButton -> {
 				if (dialogButton == ButtonType.APPLY) {
 					try {
@@ -541,12 +541,12 @@ public class ObjectClassifierCommand implements Runnable {
 				return dialogButton;
 			});
 
-			// Afficher la boîte
+
 			Optional<ButtonType> result = dialog.showAndWait();
 			if (result.isEmpty() || result.get() != ButtonType.APPLY)
 				return false;
 
-			// ✅ Met à jour la liste d’images
+
 			trainingEntries.clear();
 			trainingEntries.addAll(listView.getTargetItems());
 
