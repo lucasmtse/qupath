@@ -355,7 +355,7 @@ public class ObjectClassifierCommand implements Runnable {
 		 * Visualization of the training object proportions
 		 */
 		private PieChart pieChart;
-
+		private PieChart pieChartTest;
 		private ExecutorService pool = Executors.newSingleThreadExecutor(ThreadTools.createThreadFactory("object-classifier", true));
 		private FutureTask<ObjectClassifier<BufferedImage>> classifierTask;
 		private VBox evaluationPanel;
@@ -497,7 +497,7 @@ public class ObjectClassifierCommand implements Runnable {
 				return false;
 			}
 
-		
+
 			var listView = ProjectDialogs.createImageChoicePane(qupath, project.getImageList(), trainingEntries,
 					"Specified image is open!");
 
@@ -650,6 +650,8 @@ public class ObjectClassifierCommand implements Runnable {
 					}
 				}
 				updatePieChart(training);
+
+
 				return classifier;
 			});
 		}
@@ -893,6 +895,9 @@ public class ObjectClassifierCommand implements Runnable {
 				pieChart.setTitle("No data");
 			else
 				pieChart.setTitle("Training data");
+
+			updatePieChartTest(training);
+
 		}
 
 		void updatePieChart(Map<PathClass, Set<PathObject>> map) {
@@ -907,6 +912,26 @@ public class ObjectClassifierCommand implements Runnable {
 			ChartTools.setPieChartData(pieChart, counts, PathClass::toString, p -> ColorToolsFX.getCachedColor(p.getColor()), true, !map.isEmpty());
 		}
 
+		<T> void updatePieChartTest(Collection<TrainingData<T>> training) {
+			if (!Platform.isFxApplicationThread()) {
+				Platform.runLater(() -> updatePieChartTest(training));
+				return;
+			}
+			var counts = new LinkedHashMap<PathClass, Integer>();
+			for (var t : training) {
+				for (var entry : t.testMap.entrySet()) {
+					var key = entry.getKey();
+					Integer total = counts.getOrDefault(key, 0) + entry.getValue().size();
+					counts.put(entry.getKey(), total);
+				}
+			}
+			ChartTools.setPieChartData(pieChartTest, counts, PathClass::toString,
+					p -> ColorToolsFX.getCachedColor(p.getColor()), false, !counts.isEmpty());
+			if (counts.isEmpty())
+				pieChartTest.setTitle("No data");
+			else
+				pieChartTest.setTitle("Test data");
+		}
 
 
 		static class TrainingData<T> {
@@ -1434,15 +1459,25 @@ public class ObjectClassifierCommand implements Runnable {
 			pieChart = new PieChart();
 			pieChart.getStyleClass().add("training-chart");
 			pieChart.setAnimated(false);
-
 			pieChart.setLabelsVisible(false);
 			pieChart.setLegendVisible(true);
 			pieChart.setPrefSize(40, 40);
-			pieChart.setMaxSize(100, 100);
 			pieChart.setLegendSide(Side.RIGHT);
-			pieChart.setMaxWidth(Double.MAX_VALUE);
-			GridPane.setVgrow(pieChart, Priority.ALWAYS);
-			pane.add(pieChart, 0, row++, pane.getColumnCount(), 1);
+			pieChart.setTitle("Training data");
+
+// New pie chart for test proportion
+			pieChartTest = new PieChart();
+			pieChartTest.getStyleClass().add("training-chart");
+			pieChartTest.setAnimated(false);
+			pieChartTest.setLabelsVisible(false);
+			pieChartTest.setLegendVisible(true);
+			pieChartTest.setPrefSize(40, 40);
+			pieChartTest.setLegendSide(Side.RIGHT);
+			pieChartTest.setTitle("Test data");
+
+			HBox pieBox = new HBox(20, pieChart, pieChartTest);
+			pieBox.setAlignment(Pos.CENTER);
+			pane.add(pieBox, 0, row++, pane.getColumnCount(), 1);
 
 			// Label showing cursor location
 			var labelCursor = new Label();
@@ -1463,8 +1498,35 @@ public class ObjectClassifierCommand implements Runnable {
 			btnEvaluateTest.setTooltip(new Tooltip("Évalue les prédictions du classifieur sur les objets test (SetType = 0.0)"));
 
 			btnEvaluateTest.setOnAction(e -> {
-				new Thread(() -> evaluateTestSet()).start();  // pour ne pas bloquer l'UI
+				new Thread(() -> {
+					// Récupérer le classifieur actuel s’il est prêt
+					if (classifierTask == null) {
+						logger.warn("Classifier non encore entraîné !");
+						return;
+					}
+
+					ObjectClassifier<BufferedImage> classifier;
+					try {
+						classifier = classifierTask.get(); // attendre que le training soit fini
+					} catch (Exception ex) {
+						logger.error("Erreur récupération classifieur", ex);
+						return;
+					}
+
+					if (classifier == null) {
+						logger.warn("Classifieur nul, impossible de classifier les images");
+						return;
+					}
+
+					// Appliquer le classifieur à toutes les images du projet
+					classifyAllProjectImages(classifier);
+
+					// Ensuite évaluer le test
+					evaluateTestSet();
+
+				}).start();  // Ne pas bloquer l’UI
 			});
+
 			pane.add(btnEvaluateTest, 0, row++, pane.getColumnCount(), 1);
 
 // Panel for evaluation results
@@ -1765,6 +1827,25 @@ public class ObjectClassifierCommand implements Runnable {
 				// Mettre à jour les classes sélectionnées par l'utilisateur
 				positiveClass = comboPositive.getValue();
 				negativeClass = comboNegative.getValue();
+			}
+		}
+
+		private void classifyAllProjectImages(ObjectClassifier<BufferedImage> classifier) {
+			var project = qupath.getProject();
+			if (project == null)
+				return;
+
+			for (var entry : trainingEntries) {
+				try {
+					var imageData = entry.readImageData();
+					var pathObjects = classifier.getCompatibleObjects(imageData);
+					if (classifier.classifyObjects(imageData, pathObjects, true) > 0) {
+						imageData.getHierarchy().fireObjectClassificationsChangedEvent(this, pathObjects);
+					}
+					entry.saveImageData(imageData);  // Très important !
+				} catch (Exception e) {
+					logger.error("Erreur classification image {} : {}", entry.getImageName(), e.getMessage());
+				}
 			}
 		}
 
