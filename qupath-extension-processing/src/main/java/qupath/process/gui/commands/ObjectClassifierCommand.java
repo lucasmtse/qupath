@@ -176,7 +176,6 @@ public class ObjectClassifierCommand implements Runnable {
 
 	// TODO: Check use of static dialog
 	private Stage dialog;
-	//	private ClassifierBuilderPanel<PathObjectClassifier> panel;
 
 	/**
 	 * Constructor.
@@ -1551,42 +1550,42 @@ public class ObjectClassifierCommand implements Runnable {
 			confusionGrid.setAlignment(Pos.CENTER_LEFT);
 			confusionGrid.setStyle("-fx-border-color: #ccc; -fx-border-width: 1px; -fx-background-color: #f0f0f0;");
 
-// En-têtes colonnes dynamiques
-			Label header1 = new Label("");  // Case vide pour alignement
-			Label header2 = new Label("Pred: Pos ");  // Classe positive (TP)
-			Label header3 = new Label("Pred:  Neg");  // Classe négative (TN)
+//
+			Label header1 = new Label("");
+			Label header2 = new Label("Pred: Pos ");  // Class positive (TP)
+			Label header3 = new Label("Pred:  Neg");  // Class négative (TN)
 
 			header2.setStyle("-fx-font-weight: bold;");
 			header3.setStyle("-fx-font-weight: bold;");
 
-// Ajouter les en-têtes une seule fois
+//
 			confusionGrid.add(header1, 0, 0);
 			confusionGrid.add(header2, 1, 0);
 			confusionGrid.add(header3, 2, 0);
 
-// Lignes avec étiquettes dynamiques
-			Label row1 = new Label("True: Pos");  // Classe positive (TP)
+//
+			Label row1 = new Label("True: Pos");  // Class positive (TP)
 			row1.setStyle("-fx-font-weight: bold;");
-			Label row2 = new Label("True: Neg");  // Classe négative (TN)
+			Label row2 = new Label("True: Neg");  // Class négative (TN)
 			row2.setStyle("-fx-font-weight: bold;");
 
-// Ajouter les lignes une seule fois
+//
 			confusionGrid.add(row1, 0, 1);
 			confusionGrid.add(row2, 0, 2);
 
-// Cellules dynamiques pour les résultats
+//
 			cellTP = new Label("-");
 			cellFN = new Label("-");
 			cellFP = new Label("-");
 			cellTN = new Label("-");
 
-// Ajouter les cellules dans la grille (une seule fois)
+//
 			confusionGrid.add(cellTP, 1, 1);
 			confusionGrid.add(cellFN, 2, 1);
 			confusionGrid.add(cellFP, 1, 2);
 			confusionGrid.add(cellTN, 2, 2);
 
-// Ajouter la grille de confusion et les autres résultats à l'interface
+// add confusion matrix and the 4 other metrics
 			evaluationPanel.getChildren().addAll(
 					confusionGrid,
 					new Separator(),
@@ -1765,12 +1764,12 @@ public class ObjectClassifierCommand implements Runnable {
 
 
 
-
+//function to choose classes for the evaluation (binary task prediction)
 		private void showClassSelectionDialog() {
-			// Set pour stocker les classes uniques du projet
+			//
 			Set<PathClass> availableClasses = new HashSet<>();
 
-			// Lire la première image du projet (on peut en choisir une pour récupérer les classes)
+			// read first image
 			var project = qupath.getProject();
 			if (project == null) {
 				logger.error("Aucun projet trouvé !");
@@ -1778,10 +1777,10 @@ public class ObjectClassifierCommand implements Runnable {
 			}
 
 			try {
-				// Récupérer l'image de la première entrée du projet
+				//
 				var firstImageData = project.getImageList().get(0).readImageData();  // On lit les données de la première image
 
-				// Parcours des objets de la hiérarchie de la première image pour récupérer leurs classes
+				// get classes
 				for (PathObject obj : firstImageData.getHierarchy().getFlattenedObjectList(null)) {
 					PathClass pc = obj.getPathClass();
 					if (pc != null) {
@@ -1793,18 +1792,18 @@ public class ObjectClassifierCommand implements Runnable {
 				return;
 			}
 
-			// Convertir les classes disponibles en liste triée par nom
+
 			List<PathClass> classList = availableClasses.stream()
 					.sorted(Comparator.comparing(PathClass::getName))
 					.toList();
 
-			// Créer les ComboBox pour la sélection des classes positive et négative
+			// create positive and negative classes for the following test
 			ComboBox<PathClass> comboPositive = new ComboBox<>(FXCollections.observableArrayList(classList));
 			ComboBox<PathClass> comboNegative = new ComboBox<>(FXCollections.observableArrayList(classList));
 			comboPositive.setValue(positiveClass);
 			comboNegative.setValue(negativeClass);
 
-			// Créer le panneau GridPane pour afficher les options
+
 			GridPane grid = new GridPane();
 			grid.setHgap(10);
 			grid.setVgap(10);
@@ -1815,16 +1814,16 @@ public class ObjectClassifierCommand implements Runnable {
 			grid.add(new Label("Classe négative (TN) :"), 0, 1);
 			grid.add(comboNegative, 1, 1);
 
-			// Créer la boîte de dialogue
+
 			Dialog<ButtonType> dialog = new Dialog<>();
-			dialog.setTitle("Choix des classes d’évaluation");
+			dialog.setTitle("Choose evaluation classes");
 			dialog.getDialogPane().setContent(grid);
 			dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
-			// Attendre la réponse de l'utilisateur
+
 			Optional<ButtonType> result = dialog.showAndWait();
 			if (result.isPresent() && result.get() == ButtonType.OK) {
-				// Mettre à jour les classes sélectionnées par l'utilisateur
+				// uptqde
 				positiveClass = comboPositive.getValue();
 				negativeClass = comboNegative.getValue();
 			}
@@ -1857,14 +1856,14 @@ public class ObjectClassifierCommand implements Runnable {
 				return;
 			}
 
-			// Initialiser les compteurs
+			// Initialize
 			int TP = 0, TN = 0, FP = 0, FN = 0;
 
-			// Classes pour l'évaluation (ici, les classes sont définies dynamiquement)
+			// Interactive classes
 			PathClass positiveClass = this.positiveClass;  // Classe positive (sélectionnée par l'utilisateur)
 			PathClass negativeClass = this.negativeClass;  // Classe négative (sélectionnée par l'utilisateur)
 
-			// Parcours de toutes les images d'entraînement
+			// test for each image of the training
 			for (var entry : trainingEntries) {
 				ImageData<BufferedImage> imageData;
 				try {
@@ -1876,47 +1875,47 @@ public class ObjectClassifierCommand implements Runnable {
 
 				var hierarchy = imageData.getHierarchy();
 
-				// Objets de test (associés à "SetType" = 0.0)
+				// Test object = object with settype = 0
 				var testObjects = hierarchy.getDetectionObjects().stream()
 						.filter(obj -> obj.getMeasurementList().get("SetType") == 0.0)
 						.toList();
 
-				// Annotations
+
 				List<PathAnnotationObject> anns = hierarchy.getAnnotationObjects().stream()
 						.filter(obj -> obj instanceof PathAnnotationObject)
 						.map(obj -> (PathAnnotationObject) obj)
 						.toList();
 
-				// Points d'annotations Cy5
+				// Annotation points TP = pointsCy5ROI
 				var pointsCy5ROI = anns.stream()
 						.filter(a -> positiveClass.equals(a.getPathClass()) && a.getROI() instanceof PointsROI)
 						.findFirst();
 
-				// Points d'annotations Other: Cy5
+				// Annotation points TP = pointsOtherROI
 				var pointsOtherROI = anns.stream()
 						.filter(a -> negativeClass.equals(a.getPathClass()) && a.getROI() instanceof PointsROI)
 						.findFirst();
 
 				// Si les annotations ne sont pas présentes, ignorer l'image
 				if (pointsCy5ROI.isEmpty() || pointsOtherROI.isEmpty()) {
-					logger.warn("Image {} ignorée — Annotations Cy5 ou Other: Cy5 manquantes", entry.getImageName());
+					logger.warn("Image {} ignored — Annotations is missing", entry.getImageName());
 					continue;
 				}
 
 				var cy5Points = ((PointsROI) pointsCy5ROI.get().getROI()).getAllPoints();
 				var otherPoints = ((PointsROI) pointsOtherROI.get().getROI()).getAllPoints();
 
-				// Filtrer les points Cy5 qui correspondent aux objets de test
+				// Keep only the annotation for test object
 				var filteredCy5 = cy5Points.stream().filter(pt ->
 						testObjects.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
 				).toList();
 
-				// Filtrer les points Other qui correspondent aux objets de test
+
 				var filteredOther = otherPoints.stream().filter(pt ->
 						testObjects.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
 				).toList();
 
-				// Objets prédits de Cy5 et Other
+				// Get prediction
 				var predictedCy5 = testObjects.stream()
 						.filter(obj -> positiveClass.equals(obj.getPathClass()))
 						.toList();
@@ -1925,7 +1924,7 @@ public class ObjectClassifierCommand implements Runnable {
 						.filter(obj -> negativeClass.equals(obj.getPathClass()))
 						.toList();
 
-				// Matched points pour Cy5 et Other
+				// Matched points with prediction and annotation
 				var matchedCy5 = filteredCy5.stream().filter(pt ->
 						predictedCy5.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
 				).count();
@@ -1934,7 +1933,7 @@ public class ObjectClassifierCommand implements Runnable {
 						predictedOther.stream().anyMatch(obj -> obj.getROI().contains(pt.getX(), pt.getY()))
 				).count();
 
-				// Calcul des valeurs de la matrice de confusion
+				// Compute values for metrics see later
 				int gtCy5 = filteredCy5.size();
 				int gtOther = filteredOther.size();
 				int tp = (int) matchedCy5;
@@ -1946,18 +1945,18 @@ public class ObjectClassifierCommand implements Runnable {
 				TN += tn;
 				FN += fn;
 				FP += fp;
-
+				// verify line in console to verify the results (delete?)
 				logger.info("Image {} — TP: {}, FP: {}, FN: {}, TN: {}", entry.getImageName(), tp, fp, fn, tn);
 			}
 
-			// Calcul des métriques
+			// Computation of the metrics
 			double recall = TP / (TP + FN + 1e-10);
 			double precision = TP / (TP + FP + 1e-10);
 			double f1 = 2 * precision * recall / (precision + recall + 1e-10);
 			double cohen = 2.0 * (TP * TN - FN * FP) /
 					((TP + FP) * (FP + TN) + (TP + FN) * (FN + TN) + 1e-10);
 
-			// Mise à jour de l'interface avec les résultats
+			// bug without this line ? (delete maybe)
 			final int TP_ = TP;
 			final int FN_ = FN;
 			final int FP_ = FP;
@@ -1969,12 +1968,12 @@ public class ObjectClassifierCommand implements Runnable {
 			final double kappa_ = cohen;
 
 			Platform.runLater(() -> {
-				// Efface les anciennes valeurs de la grille (sauf les en-têtes)
+				//
 				confusionGrid.getChildren().removeIf(node ->
 						GridPane.getRowIndex(node) != null && GridPane.getRowIndex(node) > 0 && GridPane.getColumnIndex(node) > 0
 				);
 
-				// Ajoute les nouvelles valeurs dans la grille
+				//
 				confusionGrid.add(new Label(String.valueOf(TP_)), 1, 1);
 				confusionGrid.add(new Label(String.valueOf(FN_)), 2, 1);
 				confusionGrid.add(new Label(String.valueOf(FP_)), 1, 2);
